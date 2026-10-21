@@ -1,0 +1,9 @@
+schema	M3_ECLIPSE_BUILD_SOURCE_GATE_V1
+repository	hsoliwal/org.eclipse.emf
+source_ref	master
+root_path	pom.xml
+root_sha256	1e0985cd4a3f8e97807e4ba5a941fb1bc79686cc23bfeb0914aca494b5848bfb
+original_build	EMF_ECORE_MAVEN
+canonical_recipe	com.synexia.eclipse.EstateAstOrgEclipseEmf20261021
+canonical_commit	b77c892d7519c6aa037c2b5cebd8658867ea712b
+status	HOLD_NATIVE_AND_SEMANTIC_GATES
