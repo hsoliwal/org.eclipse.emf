@@ -1,0 +1,3 @@
+repo	kind	path	line	text
+org.eclipse.emf	unnamed_pattern	doc/org.eclipse.emf.examples.jet.article2/src/org/eclipse/emf/examples/jet/article2/model/NameUtil.java	58	   * case characters, except for characters following an underscore '_' or a
+org.eclipse.emf	unnamed_pattern	plugins/org.eclipse.emf.codegen/src/org/eclipse/emf/codegen/util/CodeGenUtil.java	654	   * This method breaks sourceName into words delimited by mixed-case naming, the separators '_' and '$', and non-Java identifier characters.
