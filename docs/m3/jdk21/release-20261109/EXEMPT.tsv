@@ -1,0 +1,1 @@
+tests/org.eclipse.emf.test.tools/data/*	JET/merge test input sources (deliberately partial Java, read as data by the merge tests)
