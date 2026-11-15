@@ -1,0 +1,125 @@
+name: EMF verification build
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [master, 'release/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # These Java/target pairs are also maintained by the Jenkins build.
+          - { java: 21, target: '2026-09' }
+          - { java: 25, target: '2026-12' }
+    name: Java ${{ matrix.java }} Target ${{ matrix.target }} verify
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the shared test-report verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hsoliwal/eclipse.platform.swt
+          ref: 1202ab304c3b81b73b628d201b987941d16c94d2
+          path: .release-tools/swt
+          sparse-checkout: tools/release/readiness.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Keep the verifier outside the product reactor
+        run: |
+          mv .release-tools/swt "$RUNNER_TEMP/swt-release-tools"
+          rmdir .release-tools
+          test "$(git -C "$RUNNER_TEMP/swt-release-tools" rev-parse HEAD)" = 1202ab304c3b81b73b628d201b987941d16c94d2
+      - name: Set up test-report validation
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Set up Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          mvn-toolchain-id: JavaSE-${{ matrix.java }}
+          cache: maven
+      - name: Set up Maven
+        uses: stCarolas/setup-maven@d6af6abeda15e98926a57b5aa970a96bb37f97d1 # v5
+        with:
+          maven-version: 3.9.12
+      - name: Install display dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq -y libgtk-3-dev xvfb
+      - name: Record source and toolchains
+        run: |
+          {
+            git rev-parse HEAD
+            git rev-parse 'HEAD^{tree}'
+            java -version 2>&1
+            mvn -version
+            git -C "$RUNNER_TEMP/swt-release-tools" rev-parse HEAD
+            python -c 'import hashlib, os; from pathlib import Path; p = Path(os.environ["RUNNER_TEMP"]) / "swt-release-tools/tools/release/readiness.py"; print("REPORT_PARSER_SHA256=" + hashlib.sha256(p.read_bytes()).hexdigest())'
+          } > "$RUNNER_TEMP/emf-source.txt"
+      - name: Build and test the existing reactor
+        run: |
+          xvfb-run -a mvn -V -B -ntp --fail-at-end clean verify \
+            -Dtarget-platform=${{ matrix.target }} -DjavaVersion=${{ matrix.java }} \
+            -Dbuild.id="$(date -u +%Y%m%d%H%M)" -Dcommit.id="$(git rev-parse HEAD)" \
+            -Dbuild.type=nightly -Dpromote=false -DECLIPSE_SIGN=false \
+            -Dorg.eclipse.justj.p2.manager.args= \
+            -Dtycho.baseline.replace=none -Dtycho.localArtifacts=ignore \
+            -DskipTests=false -Dmaven.test.skip=false -Dmaven.test.failure.ignore=false \
+            -DfailIfNoTests=true
+      - name: Require successful executed tests from every test bundle
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          source = Path(os.environ['RUNNER_TEMP']) / 'swt-release-tools/tools/release/readiness.py'
+          spec = importlib.util.spec_from_file_location('swt_readiness', source)
+          verifier = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(verifier)
+          namespace = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          test_bundles = []
+          for pom in sorted(Path('tests').glob('*/pom.xml')):
+              if ET.parse(pom).getroot().findtext('m:packaging', namespaces=namespace) == 'eclipse-test-plugin':
+                  test_bundles.append(pom.parent)
+          if not test_bundles:
+              raise SystemExit('No EMF test bundles found')
+          seen_files = set()
+          for bundle in test_bundles:
+              counts = verifier.junit_report(bundle / 'target/surefire-reports', seen_files)
+              if counts['failures'] or counts['errors']:
+                  raise SystemExit('Failed tests: ' + str(bundle))
+              print(json.dumps({'bundle': str(bundle), **counts}))
+          PY
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-java-${{ matrix.java }}-target-${{ matrix.target }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: tests/**/target/surefire-reports/*.xml
+      - name: Upload source and toolchains
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-java-${{ matrix.java }}-target-${{ matrix.target }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/emf-source.txt
